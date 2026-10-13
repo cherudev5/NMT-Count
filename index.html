@@ -92,7 +92,7 @@
   <div id="filesView" class="hide">
     <div id="allBtns">
       <button id="dlAll" style="background:var(--btn)">Download all (1 Excel file)</button>
-      <button id="shAll" style="background:var(--green)">Share all</button>
+      <button id="upAll" class="hide" style="background:var(--green)">Upload all</button>
     </div>
     <div id="upBar" class="hide">
       <label><input type="checkbox" id="selAll"> Select all not uploaded</label>
@@ -132,7 +132,7 @@ const ICONS = {
 // Icon files: put your SVG files in the "icons" folder next to index.html.
 // If your files have different names, change them here.
 const ICON_FILES = {
-  'Cyclist':         'icons/bicycle-man-svgrepo-com.svg',
+  'Cyclist':         'icons/cycling.svg',
   'Woman':           'icons/woman-walking-facing-right.svg',
   'Man':             'icons/man-walking-facing-right.svg',
   'Child':           'icons/child.svg',
@@ -195,7 +195,7 @@ $('selAll').onchange = e => {
   renderFiles();
 };
 $('dlAll').onclick = () => downloadBlob(allName(), toBlob(allWorkbook()));
-$('shAll').onclick = () => shareBlob(allName(), toBlob(allWorkbook()));
+$('upAll').onclick = () => uploadRecs(sessions.filter(r => !r.uploaded));
 if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 // ---------- views ----------
@@ -395,18 +395,6 @@ function downloadBlob(name, blob){
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
 }
-// Opens the phone's share sheet (WhatsApp, email, Drive…) with the Excel file attached
-async function shareBlob(name, blob){
-  const file = new File([blob], name, {type: XLSX_TYPE});
-  if (navigator.canShare && navigator.canShare({files: [file]})){
-    try{ await navigator.share({files: [file], title: name, text: 'Street survey counts'}); }
-    catch(e){ if (e.name !== 'AbortError') toast('Sharing failed – try Download instead'); }
-  } else {
-    downloadBlob(name, blob);
-    toast('Sharing is not available here – file downloaded. Attach it in WhatsApp or email.');
-  }
-}
-
 // ---------- Files page ----------
 function h(tag, cls, text){ const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
 function renderFiles(){
@@ -414,6 +402,7 @@ function renderFiles(){
   $('allBtns').classList.toggle('hide', !sessions.length);
   const pending = sessions.filter(r => !r.uploaded);
   $('upBar').classList.toggle('hide', !CONFIG.uploadUrl || !sessions.length);
+  $('upAll').classList.toggle('hide', !CONFIG.uploadUrl || !pending.length);
   $('selAll').checked = pending.length > 0 && pending.every(r => selected.has(r.uid));
   $('upBtn').disabled = selected.size === 0;
   $('upBtn').textContent = 'Upload selected' + (selected.size ? ' (' + selected.size + ')' : '');
@@ -433,15 +422,17 @@ function renderFiles(){
     }
     card.appendChild(meta);
     const b = h('div', 'fbtns');
-    const dl = h('button', 'b-dl', 'Download'), sh = h('button', 'b-sh', 'Share'), del = h('button', 'b-del', 'Delete');
+    const dl = h('button', 'b-dl', 'Download'), del = h('button', 'b-del', 'Delete');
     dl.onclick = () => downloadBlob(name, toBlob(sessionWorkbook(r)));
-    sh.onclick = () => shareBlob(name, toBlob(sessionWorkbook(r)));
+    const up = h('button', 'b-sh', r.uploaded ? 'Uploaded ✓' : 'Upload');
+    if (r.uploaded){ up.disabled = true; up.style.opacity = '.55'; } else up.onclick = () => uploadRecs([r]);
     del.onclick = () => {
       const warn = (CONFIG.uploadUrl && !r.uploaded) ? ' It has NOT been uploaded yet.' : '';
       if (!confirm('Delete ' + name + ' from this phone?' + warn + ' This cannot be undone.')) return;
       sessions = sessions.filter(x => x.uid !== r.uid); selected.delete(r.uid); saveSessions(); renderFiles(); toast('File deleted');
     };
-    b.append(dl, sh, del); card.appendChild(b); list.appendChild(card);
+    if (CONFIG.uploadUrl) b.append(dl, up, del); else b.append(dl, del);
+    card.appendChild(b); list.appendChild(card);
   });
 }
 
@@ -458,11 +449,14 @@ function postBatch(batch){
     .then(res => { clearTimeout(timer); return res; });
 }
 let uploading = false;
-async function uploadSelected(){
-  if (uploading) return;
-  if (!navigator.onLine){ toast('No internet – connect and try again'); return; }
+function uploadSelected(){
   const recs = sessions.filter(r => selected.has(r.uid) && !r.uploaded);
   if (!recs.length){ toast('Tick at least one file'); return; }
+  uploadRecs(recs);
+}
+async function uploadRecs(recs){
+  if (uploading || !recs.length) return;
+  if (!navigator.onLine){ toast('No internet – connect and try again'); return; }
   uploading = true;
   overlay('⏳', 'Uploading ' + recs.length + ' file' + (recs.length > 1 ? 's' : '') + '…');
   let ok = 0, fail = 0;
