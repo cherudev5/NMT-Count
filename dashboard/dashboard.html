@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Street Survey Dashboard</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+<style>
+  :root{
+    --bg:#f4f5f7;--card:#fff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;--accent:#374151;
+    --in:#2563eb;--out:#ea580c;--ok:#198754;--warn:#b45309;--bad:#dc3545;--shadow:0 1px 2px rgba(0,0,0,.08)
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#111827;--card:#1f2937;--text:#f3f4f6;--muted:#9ca3af;--line:#374151;--accent:#4b5563;--in:#60a5fa;--out:#fb923c;--ok:#34d399;--warn:#fbbf24;--bad:#f87171;--shadow:none}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:Roboto,Arial,sans-serif;font-size:14px}
+  header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:14px 18px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  h1{font-size:20px;margin:0}
+  .sub{color:var(--muted);font-size:12px}
+  .btn{border:0;border-radius:6px;background:var(--accent);color:#fff;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer}
+  .btn.alt{background:transparent;color:var(--text);border:1px solid var(--line)}
+  .btn:disabled{opacity:.5;cursor:default}
+  main{max-width:1280px;margin:0 auto;padding:16px}
+  .filters{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;background:var(--card);padding:12px;border-radius:10px;box-shadow:var(--shadow);margin-bottom:14px}
+  .filters label{display:flex;flex-direction:column;font-size:11px;font-weight:700;color:var(--muted);gap:3px;text-transform:uppercase;letter-spacing:.3px}
+  select,input[type=date],input[type=text],input[type=password]{height:36px;border:1px solid var(--line);border-radius:6px;padding:0 8px;background:var(--bg);color:var(--text);font-size:14px;min-width:140px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+  .kpi{background:var(--card);border-radius:10px;padding:12px 14px;box-shadow:var(--shadow)}
+  .kpi .v{font-size:26px;font-weight:700;line-height:1.1}
+  .kpi .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-top:4px}
+  .kpi.in .v{color:var(--in)} .kpi.out .v{color:var(--out)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:14px}
+  .card{background:var(--card);border-radius:10px;padding:14px;box-shadow:var(--shadow);min-width:0}
+  .card h2{font-size:14px;margin:0 0 10px}
+  .card .note{color:var(--muted);font-size:12px;margin:-6px 0 10px}
+  .legend{display:flex;gap:12px;font-size:12px;color:var(--muted);margin-bottom:8px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+  .i-in{background:var(--in)} .i-out{background:var(--out)} .i-one{background:var(--accent)}
+  .hb{display:grid;grid-template-columns:minmax(70px,130px) 1fr 58px;gap:8px;align-items:center;margin:5px 0;font-size:13px}
+  .hb .lab{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hb .track{display:flex;height:16px;background:var(--bg);border-radius:4px;overflow:hidden}
+  .hb .track b{display:block;height:100%}
+  .hb .num{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+  .vb{display:flex;align-items:flex-end;gap:4px;height:170px;padding-top:16px}
+  .vb div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0}
+  .vb .bar{width:100%;background:var(--in);border-radius:3px 3px 0 0;min-height:1px;position:relative}
+  .vb .val{font-size:10px;color:var(--muted);margin-bottom:2px}
+  .vb .x{font-size:10px;color:var(--muted);margin-top:4px}
+  svg.line{width:100%;height:190px;display:block}
+  #map{height:340px;border-radius:8px;background:var(--bg)}
+  #cSplit{max-height:420px;overflow:auto;padding-right:4px}
+  .tablewrap{overflow:auto;max-height:520px;border:1px solid var(--line);border-radius:8px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{position:sticky;top:0;background:var(--card);cursor:pointer;user-select:none;font-size:12px}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{padding:2px 7px;border-radius:10px;font-size:11px;font-weight:700}
+  .pill.ok{background:rgba(25,135,84,.15);color:var(--ok)} .pill.warn{background:rgba(180,83,9,.15);color:var(--warn)} .pill.bad{background:rgba(220,53,69,.15);color:var(--bad)}
+  .empty{color:var(--muted);text-align:center;padding:24px}
+  #msg{display:none;margin-bottom:14px;padding:12px 14px;border-radius:8px;background:rgba(220,53,69,.12);color:var(--bad);font-weight:600}
+  #msg.info{background:rgba(37,99,235,.12);color:var(--in)}
+  #lock{display:none;max-width:360px;margin:60px auto;background:var(--card);padding:20px;border-radius:10px;box-shadow:var(--shadow)}
+  #lock h2{margin-top:0}
+  #lock input{width:100%;margin:8px 0 12px}
+  .qrow{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
+  .qrow:last-child{border:0}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Street Survey Dashboard</h1>
+    <div class="sub" id="updated">Loading…</div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <select id="auto" title="Auto-refresh" style="min-width:110px">
+      <option value="0">Auto-refresh: off</option>
+      <option value="60">Every 1 min</option>
+      <option value="300">Every 5 min</option>
+    </select>
+    <button class="btn" id="refresh">↻ Refresh</button>
+  </div>
+</header>
+
+<div id="lock">
+  <h2>Enter password</h2>
+  <div class="sub">This dashboard is protected.</div>
+  <input type="password" id="keyIn" placeholder="Dashboard password">
+  <button class="btn" id="keyGo" style="width:100%">Open dashboard</button>
+</div>
+
+<main id="app">
+  <div id="msg"></div>
+
+  <section class="filters">
+    <label>From<input type="date" id="fFrom"></label>
+    <label>To<input type="date" id="fTo"></label>
+    <label>Point code<select id="fPoint"><option value="">All points</option></select></label>
+    <label>Enumerator<select id="fEnum"><option value="">All enumerators</option></select></label>
+    <label>Weather<select id="fWeather"><option value="">All weather</option></select></label>
+    <button class="btn alt" data-range="today">Today</button>
+    <button class="btn alt" data-range="7">Last 7 days</button>
+    <button class="btn alt" id="reset">Reset</button>
+  </section>
+
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Counts by category</h2>
+      <div class="legend"><span><i class="i-in"></i>Incoming</span><span><i class="i-out"></i>Outgoing</span></div>
+      <div id="cCat"></div>
+    </div>
+    <div class="card">
+      <h2>Counts by point</h2>
+      <div class="legend"><span><i class="i-in"></i>Incoming</span><span><i class="i-out"></i>Outgoing</span></div>
+      <div id="cPoint"></div>
+    </div>
+    <div class="card">
+      <h2>Average count per 15-min session, by start hour</h2>
+      <div class="note">Shows when traffic is busiest.</div>
+      <div id="cHour"></div>
+    </div>
+    <div class="card">
+      <h2>Total counted per day</h2>
+      <div id="cDay"></div>
+    </div>
+    <div class="card">
+      <h2>Average per session, by weather</h2>
+      <div id="cWeather"></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card" style="grid-column:1/-1">
+      <h2>Survey points map</h2>
+      <div class="note">Circle size = total counted at that point. Click a circle for details.</div>
+      <div id="map"></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>GPS data quality</h2>
+      <div id="quality"></div>
+    </div>
+    <div class="card">
+      <h2>Direction split by point</h2>
+      <div class="legend"><span><i class="i-in"></i>Incoming</span><span><i class="i-out"></i>Outgoing</span></div>
+      <div class="note">Each bar is normalized to 100% at that point — city-wide direction totals hide local patterns.</div>
+      <div id="cSplit"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h2 style="margin:0">Sessions <span class="sub" id="tCount"></span></h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="search" placeholder="Search point / enumerator…">
+        <button class="btn" id="xlsx">Export Excel</button>
+        <button class="btn alt" id="csv">Export CSV</button>
+      </div>
+    </div>
+    <div class="tablewrap"><table id="tbl"></table></div>
+    <div style="text-align:center;margin-top:10px"><button class="btn alt" id="more">Show more</button></div>
+  </section>
+</main>
+
+<script>
+/* ============================================================
+   SETTINGS
+   ============================================================ */
+const CONFIG = {
+  // Same Apps Script web app URL used by the counter app (ends in /exec)
+  dataUrl: 'https://script.google.com/macros/s/AKfycbyxD5q7HiKZsJzF7zZ0Fg9wFJhu79mZUHci4Ibl93DqtVezk59iEG3kU32HTER2kRBa8A/exec',
+  viewKey: '',        // leave '' to be asked for a password only if the server requires one
+  targetAcc: 10       // GPS accuracy target in metres
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2, '0');
+const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+const fmtN = n => Number(n).toLocaleString('en-US', {maximumFractionDigits: 1});
+const num = v => { if (v === '' || v == null) return null; const n = Number(v); return isFinite(n) ? n : null; };
+
+let ALL = [], VIEW = [], CATS = [], shown = 50, sort = {k: 'start', dir: -1}, timer = null, key = CONFIG.viewKey || sessionStorage.getItem('dashKey') || '';
+
+/* ---------- loading ---------- */
+function load(){
+  $('updated').textContent = 'Loading…';
+  const url = CONFIG.dataUrl + (CONFIG.dataUrl.indexOf('?') < 0 ? '?' : '&') + 'action=data&key=' + encodeURIComponent(key) + '&_=' + Date.now();
+  fetch(url).then(r => r.json()).then(j => {
+    if (!j || j.ok === false){
+      if (j && j.error === 'unauthorized'){ showLock(); return; }
+      showMsg('Server error: ' + (j && j.error ? j.error : 'unknown'), false); return;
+    }
+    $('lock').style.display = 'none'; $('app').style.display = '';
+    showMsg('');
+    ingest(j);
+  }).catch(() => {
+    showMsg('Could not reach the server. Check your internet connection and the dataUrl setting.', false);
+    $('updated').textContent = 'Offline';
+  });
+}
+function showMsg(t, info){ const m = $('msg'); m.textContent = t; m.className = info ? 'info' : ''; m.style.display = t ? 'block' : 'none'; }
+function showLock(){ $('app').style.display = 'none'; $('lock').style.display = 'block'; $('updated').textContent = 'Password required'; }
+
+function ingest(j){
+  const rows = j.rows || [];
+  // category names come from the sheet's "<Category> – Incoming/Outgoing" columns
+  const cats = [];
+  if (rows.length) Object.keys(rows[0]).forEach(h => { const m = h.match(/^(.+) – Incoming$/); if (m) cats.push(m[1]); });
+  CATS = cats;
+  ALL = rows.map(o => {
+    const c = {}; let inc = 0, out = 0;
+    CATS.forEach(k => { const a = Number(o[k + ' – Incoming']) || 0, b = Number(o[k + ' – Outgoing']) || 0; c[k] = {i: a, o: b}; inc += a; out += b; });
+    const start = new Date(o.start);
+    return {
+      session: o.session, point: String(o.point_code == null ? '' : o.point_code), weather: String(o.weather || ''),
+      enumerator: String(o.enumerator_name || ''), device: o.device_id, start: start, valid: !isNaN(start),
+      lat: num(o.gps_lat), lon: num(o.gps_lon), acc: num(o.gps_accuracy_m), cats: c, inc: inc, out: out, total: inc + out
+    };
+  }).filter(r => r.valid);
+  $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString() + ' · ' + ALL.length + ' sessions in the sheet';
+  fillSelect('fPoint', 'All points', ALL.map(r => r.point));
+  fillSelect('fEnum', 'All enumerators', ALL.map(r => r.enumerator));
+  fillSelect('fWeather', 'All weather', ALL.map(r => r.weather));
+  apply();
+}
+function fillSelect(id, first, values){
+  const sel = $(id), cur = sel.value;
+  const uniq = Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+  sel.innerHTML = '<option value="">' + first + '</option>' + uniq.map(v => '<option>' + esc(v) + '</option>').join('');
+  if (uniq.indexOf(cur) >= 0) sel.value = cur;
+}
+
+/* ---------- filtering ---------- */
+function apply(){
+  const f = $('fFrom').value, t = $('fTo').value, p = $('fPoint').value, e = $('fEnum').value, w = $('fWeather').value;
+  VIEW = ALL.filter(r => {
+    const d = ymd(r.start);
+    return (!f || d >= f) && (!t || d <= t) && (!p || r.point === p) && (!e || r.enumerator === e) && (!w || r.weather === w);
+  });
+  shown = 50;
+  render();
+}
+['fFrom','fTo','fPoint','fEnum','fWeather'].forEach(id => $(id).onchange = apply);
+$('search').oninput = () => { shown = 50; renderTable(); };
+$('reset').onclick = () => { ['fFrom','fTo','fPoint','fEnum','fWeather'].forEach(id => $(id).value = ''); $('search').value = ''; apply(); };
+document.querySelectorAll('[data-range]').forEach(b => b.onclick = () => {
+  const now = new Date(), v = b.dataset.range;
+  $('fTo').value = ymd(now);
+  $('fFrom').value = v === 'today' ? ymd(now) : ymd(new Date(now.getTime() - 6 * 86400000));
+  apply();
+});
+$('refresh').onclick = load;
+$('auto').onchange = e => { clearInterval(timer); const s = +e.target.value; if (s) timer = setInterval(load, s * 1000); };
+$('keyGo').onclick = () => { key = $('keyIn').value; sessionStorage.setItem('dashKey', key); load(); };
+$('keyIn').onkeydown = e => { if (e.key === 'Enter') $('keyGo').click(); };
+
+/* ---------- aggregation helpers ---------- */
+function groupBy(rows, fn){ const m = new Map(); rows.forEach(r => { const k = fn(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }); return m; }
+const sum = (rows, k) => rows.reduce((a, r) => a + r[k], 0);
+
+function render(){
+  renderKpis(); renderCharts(); renderMap(); renderQuality(); renderTable();
+}
+
+function renderKpis(){
+  const n = VIEW.length, inc = sum(VIEW, 'inc'), out = sum(VIEW, 'out'), tot = inc + out;
+  const pts = new Set(VIEW.map(r => r.point)).size, enums = new Set(VIEW.map(r => r.enumerator)).size;
+  const byPoint = groupBy(VIEW, r => r.point);
+  let busiest = '–', best = -1;
+  byPoint.forEach((rs, k) => { const a = sum(rs, 'total') / rs.length; if (a > best){ best = a; busiest = k; } });
+  const cards = [
+    ['', n, 'Sessions'], ['', tot, 'Total counted'],  ['', n ? tot / n : 0, 'Avg per 15 min'], ['', pts, 'Points surveyed'], ['', enums, 'Enumerators'], ['', busiest, 'Busiest point (avg)']
+  ];
+  $('kpis').innerHTML = cards.map(c => '<div class="kpi ' + c[0] + '"><div class="v">' + (typeof c[1] === 'number' ? fmtN(c[1]) : esc(c[1])) + '</div><div class="l">' + c[2] + '</div></div>').join('');
+}
+
+/* ---------- pure HTML/SVG charts (no libraries) ---------- */
+function stackedBars(items, empty){
+  if (!items.length) return '<div class="empty">' + (empty || 'No data for these filters') + '</div>';
+  const max = Math.max.apply(null, items.map(i => i.a + i.b)) || 1;
+  return items.map(i => '<div class="hb"><div class="lab" title="' + esc(i.label) + '">' + esc(i.label) + '</div><div class="track">' +
+    '<b style="width:' + (i.a / max * 100) + '%;background:var(--in)"></b><b style="width:' + (i.b / max * 100) + '%;background:var(--out)"></b>' +
+    '</div><div class="num">' + fmtN(i.a + i.b) + '</div></div>').join('');
+}
+function singleBars(items, suffix){
+  if (!items.length) return '<div class="empty">No data for these filters</div>';
+  const max = Math.max.apply(null, items.map(i => i.v)) || 1;
+  return items.map(i => '<div class="hb"><div class="lab" title="' + esc(i.label) + '">' + esc(i.label) + '</div><div class="track">' +
+    '<b style="width:' + (i.v / max * 100) + '%;background:var(--accent)"></b></div><div class="num">' + fmtN(i.v) + (suffix || '') + '</div></div>').join('');
+}
+function lineChart(points){
+  if (points.length < 1) return '<div class="empty">No data for these filters</div>';
+  const W = 600, H = 190, L = 36, R = 10, T = 14, B = 26;
+  const max = Math.max.apply(null, points.map(p => p.v)) || 1;
+  const x = i => points.length === 1 ? (L + W - R) / 2 : L + i * (W - L - R) / (points.length - 1);
+  const y = v => T + (H - T - B) * (1 - v / max);
+  const path = points.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ');
+  const area = path + ' L' + x(points.length - 1).toFixed(1) + ' ' + (H - B) + ' L' + x(0).toFixed(1) + ' ' + (H - B) + ' Z';
+  const dots = points.map((p, i) => '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.v).toFixed(1) + '" r="3.5" fill="var(--in)"><title>' + esc(p.label) + ': ' + fmtN(p.v) + '</title></circle>').join('');
+  const step = Math.ceil(points.length / 6);
+  const labels = points.map((p, i) => (i % step === 0 || i === points.length - 1) ? '<text x="' + x(i).toFixed(1) + '" y="' + (H - 8) + '" font-size="10" text-anchor="middle" fill="var(--muted)">' + esc(p.label.slice(5)) + '</text>' : '').join('');
+  return '<svg class="line" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+    '<line x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '" stroke="var(--line)"/>' +
+    '<text x="' + (L - 4) + '" y="' + (T + 4) + '" font-size="10" text-anchor="end" fill="var(--muted)">' + fmtN(max) + '</text><text x="' + (L - 4) + '" y="' + (H - B) + '" font-size="10" text-anchor="end" fill="var(--muted)">0</text>' +
+    '<path d="' + area + '" fill="var(--in)" opacity=".12"/><path d="' + path + '" fill="none" stroke="var(--in)" stroke-width="2.5"/>' + dots + labels + '</svg>';
+}
+
+function renderCharts(){
+  // categories
+  $('cCat').innerHTML = stackedBars(CATS.map(c => ({label: c, a: VIEW.reduce((s, r) => s + r.cats[c].i, 0), b: VIEW.reduce((s, r) => s + r.cats[c].o, 0)})).sort((a, b) => (b.a + b.b) - (a.a + a.b)));
+  // points (top 10 by total)
+  const pts = Array.from(groupBy(VIEW, r => r.point)).map(([k, rs]) => ({label: k || '(no code)', a: sum(rs, 'inc'), b: sum(rs, 'out')})).sort((a, b) => (b.a + b.b) - (a.a + a.b));
+  $('cPoint').innerHTML = stackedBars(pts.slice(0, 10)) + (pts.length > 10 ? '<div class="sub" style="margin-top:6px">Showing top 10 of ' + pts.length + ' points</div>' : '');
+  // by start hour (average per session)
+  const hours = groupBy(VIEW, r => r.start.getHours());
+  let hv = '';
+  const avgs = []; for (let h = 0; h < 24; h++){ const rs = hours.get(h); avgs.push(rs ? sum(rs, 'total') / rs.length : 0); }
+  const hmax = Math.max.apply(null, avgs) || 1;
+  const hStart = Math.max(0, avgs.findIndex(v => v > 0) - 0), hEnd = Math.min(23, 23 - avgs.slice().reverse().findIndex(v => v > 0));
+  if (!VIEW.length) hv = '<div class="empty">No data for these filters</div>';
+  else {
+    hv = '<div class="vb">';
+    for (let h = hStart; h <= hEnd; h++){
+      hv += '<div title="' + pad(h) + ':00 – ' + fmtN(avgs[h]) + ' avg"><span class="val">' + (avgs[h] ? fmtN(avgs[h]) : '') + '</span><span class="bar" style="height:' + (avgs[h] / hmax * 100) + '%"></span><span class="x">' + pad(h) + '</span></div>';
+    }
+    hv += '</div>';
+  }
+  $('cHour').innerHTML = hv;
+  // per day
+  const days = Array.from(groupBy(VIEW, r => ymd(r.start))).map(([k, rs]) => ({label: k, v: sum(rs, 'total')})).sort((a, b) => a.label < b.label ? -1 : 1);
+  $('cDay').innerHTML = lineChart(days);
+  // weather
+  $('cWeather').innerHTML = singleBars(Array.from(groupBy(VIEW, r => r.weather || '(none)')).map(([k, rs]) => ({label: k, v: sum(rs, 'total') / rs.length})).sort((a, b) => b.v - a.v), ' avg');
+  // direction split per point (normalized to 100%)
+  const splitPts = Array.from(groupBy(VIEW, r => r.point))
+    .map(([k, rs]) => { const i = sum(rs, 'inc'), o = sum(rs, 'out'); return {label: k || '(no code)', i: i, o: o, total: i + o}; })
+    .filter(p => p.total > 0)
+    .sort((a, b) => b.total - a.total);
+  $('cSplit').innerHTML = splitPts.length ? splitPts.map(p => {
+    const ip = Math.round(p.i / p.total * 100), op = 100 - ip;
+    return '<div class="hb" style="grid-template-columns:minmax(70px,130px) 1fr 76px" title="' + esc(p.label) + ': ' + fmtN(p.i) + ' in (' + ip + '%) · ' + fmtN(p.o) + ' out (' + op + '%)">' +
+      '<div class="lab">' + esc(p.label) + '</div>' +
+      '<div class="track"><b style="width:' + ip + '%;background:var(--in)"></b><b style="width:' + op + '%;background:var(--out)"></b></div>' +
+      '<div class="num">' + ip + '/' + op + '</div></div>';
+  }).join('') : '<div class="empty">No data for these filters</div>';
+}
+
+/* ---------- map (Leaflet, loaded from CDN) ---------- */
+let leaflet = null, layer = null;
+function renderMap(){
+  const pts = Array.from(groupBy(VIEW.filter(r => r.lat != null && r.lon != null), r => r.point)).map(([k, rs]) => ({
+    point: k, lat: rs.reduce((a, r) => a + r.lat, 0) / rs.length, lon: rs.reduce((a, r) => a + r.lon, 0) / rs.length,
+    n: rs.length, total: sum(rs, 'total'), inc: sum(rs, 'inc'), out: sum(rs, 'out')
+  }));
+  if (typeof L === 'undefined'){ ensureLeaflet(() => renderMap()); return; }
+  if (!leaflet){
+    leaflet = L.map('map', {scrollWheelZoom: false}).setView([-1.286, 36.82], 12);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '© OpenStreetMap contributors'}).addTo(leaflet);
+  }
+  if (layer) layer.remove();
+  layer = L.layerGroup().addTo(leaflet);
+  if (!pts.length) return;
+  const max = Math.max.apply(null, pts.map(p => p.total)) || 1;
+  pts.forEach(p => {
+    L.circleMarker([p.lat, p.lon], {radius: 7 + 18 * Math.sqrt(p.total / max), color: '#1d4ed8', fillColor: '#3b82f6', fillOpacity: .55, weight: 2})
+      .bindPopup('<b>' + esc(p.point) + '</b><br>Sessions: ' + p.n + '<br>Total: ' + fmtN(p.total) + '<br>Incoming: ' + fmtN(p.inc) + ' · Outgoing: ' + fmtN(p.out) + '<br>Avg / 15 min: ' + fmtN(p.total / p.n))
+      .addTo(layer);
+  });
+  leaflet.fitBounds(pts.map(p => [p.lat, p.lon]), {padding: [30, 30], maxZoom: 16});
+}
+let leafletLoading = false;
+function ensureLeaflet(cb){
+  if (leafletLoading) return; leafletLoading = true;
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+  s.onload = () => { leafletLoading = false; if (typeof L !== 'undefined') cb(); };
+  s.onerror = () => { $('map').innerHTML = '<div class="empty">Map could not be loaded (needs internet).</div>'; };
+  document.head.appendChild(s);
+}
+
+/* ---------- data quality ---------- */
+function renderQuality(){
+  const n = VIEW.length;
+  if (!n){ $('quality').innerHTML = '<div class="empty">No data for these filters</div>'; return; }
+  const withGps = VIEW.filter(r => r.acc != null), good = withGps.filter(r => r.acc <= CONFIG.targetAcc).length;
+  const missing = n - withGps.length, avg = withGps.length ? withGps.reduce((a, r) => a + r.acc, 0) / withGps.length : null;
+  const pct = withGps.length ? Math.round(good / n * 100) : 0;
+  $('quality').innerHTML =
+    '<div class="qrow"><span>Sessions within ±' + CONFIG.targetAcc + ' m</span><b><span class="pill ' + (pct >= 90 ? 'ok' : pct >= 60 ? 'warn' : 'bad') + '">' + pct + '%</span> (' + good + ' of ' + n + ')</b></div>' +
+    '<div class="qrow"><span>Weaker than ±' + CONFIG.targetAcc + ' m</span><b>' + (withGps.length - good) + '</b></div>' +
+    '<div class="qrow"><span>Missing location</span><b>' + missing + '</b></div>' +
+    '<div class="qrow"><span>Average accuracy</span><b>' + (avg == null ? '–' : '±' + fmtN(avg) + ' m') + '</b></div>';
+}
+
+/* ---------- table + export ---------- */
+const COLS = [
+  {k: 'start', t: 'Date & time', f: r => ymd(r.start) + ' ' + pad(r.start.getHours()) + ':' + pad(r.start.getMinutes())},
+  {k: 'point', t: 'Point', f: r => r.point},
+  {k: 'weather', t: 'Weather', f: r => r.weather},
+  {k: 'enumerator', t: 'Enumerator', f: r => r.enumerator},
+  {k: 'inc', t: 'Incoming', n: 1, f: r => r.inc},
+  {k: 'out', t: 'Outgoing', n: 1, f: r => r.out},
+  {k: 'total', t: 'Total', n: 1, f: r => r.total},
+  {k: 'acc', t: 'GPS ±m', n: 1, f: r => r.acc == null ? '' : r.acc}
+];
+function tableRows(){
+  const q = $('search').value.trim().toLowerCase();
+  let rows = VIEW.filter(r => !q || (r.point + ' ' + r.enumerator + ' ' + r.weather).toLowerCase().indexOf(q) >= 0);
+  rows = rows.slice().sort((a, b) => {
+    let x = a[sort.k], y = b[sort.k];
+    if (x instanceof Date){ x = x.getTime(); y = y.getTime(); }
+    if (x == null) x = -Infinity; if (y == null) y = -Infinity;
+    if (typeof x === 'string') return sort.dir * x.localeCompare(y, undefined, {numeric: true});
+    return sort.dir * (x - y);
+  });
+  return rows;
+}
+function renderTable(){
+  const rows = tableRows();
+  $('tCount').textContent = '(' + rows.length + ')';
+  const head = '<thead><tr>' + COLS.map(c => '<th class="' + (c.n ? 'n' : '') + '" data-k="' + c.k + '">' + c.t + (sort.k === c.k ? (sort.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>').join('') + '<th>Map</th></tr></thead>';
+  const body = rows.slice(0, shown).map(r => '<tr>' + COLS.map(c => {
+    let v = c.f(r);
+    if (c.k === 'acc' && v !== '') v = '<span class="pill ' + (v <= CONFIG.targetAcc ? 'ok' : 'warn') + '">±' + v + '</span>';
+    else v = esc(c.n ? fmtN(v) : v);
+    return '<td class="' + (c.n ? 'n' : '') + '">' + v + '</td>';
+  }).join('') + '<td>' + (r.lat != null ? '<a href="https://www.google.com/maps?q=' + r.lat + ',' + r.lon + '" target="_blank" rel="noopener">Open</a>' : '') + '</td></tr>').join('');
+  $('tbl').innerHTML = head + '<tbody>' + (body || '<tr><td colspan="9" class="empty">No sessions match these filters</td></tr>') + '</tbody>';
+  $('tbl').querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
+    const k = th.dataset.k; sort = {k: k, dir: sort.k === k ? -sort.dir : (k === 'start' ? -1 : 1)}; renderTable();
+  });
+  $('more').style.display = rows.length > shown ? '' : 'none';
+}
+$('more').onclick = () => { shown += 100; renderTable(); };
+
+function exportRows(){
+  return tableRows().map(r => {
+    const o = {'Date & time': COLS[0].f(r), 'Point code': r.point, 'Weather': r.weather, 'Enumerator': r.enumerator, 'Device': r.device,
+               'Incoming': r.inc, 'Outgoing': r.out, 'Total': r.total, 'GPS accuracy (m)': r.acc, 'Latitude': r.lat, 'Longitude': r.lon};
+    CATS.forEach(c => { o[c + ' – Incoming'] = r.cats[c].i; o[c + ' – Outgoing'] = r.cats[c].o; });
+    return o;
+  });
+}
+function stamp(){ const d = new Date(); return ymd(d).replace(/-/g, '') + '_' + pad(d.getHours()) + pad(d.getMinutes()); }
+function saveBlob(name, blob){
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+$('xlsx').onclick = () => {
+  const rows = exportRows(); if (!rows.length){ showMsg('Nothing to export for these filters.', true); return; }
+  if (typeof XLSX === 'undefined'){ $('csv').click(); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Sessions');
+  const pts = Array.from(groupBy(VIEW, r => r.point)).map(([k, rs]) => ({'Point code': k, 'Sessions': rs.length, 'Incoming': sum(rs, 'inc'), 'Outgoing': sum(rs, 'out'), 'Total': sum(rs, 'total'), 'Avg per 15 min': +(sum(rs, 'total') / rs.length).toFixed(1)}));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pts), 'By point');
+  saveBlob('survey_results_' + stamp() + '.xlsx', new Blob([XLSX.write(wb, {bookType: 'xlsx', type: 'array'})], {type: 'application/octet-stream'}));
+};
+$('csv').onclick = () => {
+  const rows = exportRows(); if (!rows.length){ showMsg('Nothing to export for these filters.', true); return; }
+  const head = Object.keys(rows[0]), q = v => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const csv = '\ufeff' + [head.map(q).join(',')].concat(rows.map(r => head.map(h => q(r[h])).join(','))).join('\r\n');
+  saveBlob('survey_results_' + stamp() + '.csv', new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+};
+
+load();
+</script>
+</body>
+</html>
