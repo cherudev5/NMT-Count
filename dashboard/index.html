@@ -119,8 +119,8 @@
       <div id="cPoint"></div>
     </div>
     <div class="card">
-      <h2>Average count per 15-min session, by start hour</h2>
-      <div class="note">Shows when traffic is busiest.</div>
+      <h2>Average count per hour</h2>
+      <div class="note">Actual count in each hour (sessions summed), averaged across point-days, by start hour.</div>
       <div id="cHour"></div>
     </div>
     <div class="card">
@@ -176,8 +176,30 @@ const CONFIG = {
   // Same Apps Script web app URL used by the counter app (ends in /exec)
   dataUrl: 'https://script.google.com/macros/s/AKfycbyxD5q7HiKZsJzF7zZ0Fg9wFJhu79mZUHci4Ibl93DqtVezk59iEG3kU32HTER2kRBa8A/exec',
   viewKey: '',        // leave '' to be asked for a password only if the server requires one
-  targetAcc: 10       // GPS accuracy target in metres
+  targetAcc: 10,      // GPS accuracy target in metres
+  timeZone: 'Africa/Nairobi'  // survey time zone: hours are always read in this zone, whatever the viewer's device uses
 };
+
+// Clock time of a session in the survey time zone (day, hour, minute)
+const TZ_FMT = new Intl.DateTimeFormat('en-GB', {timeZone: CONFIG.timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'});
+function clockParts(raw, d){
+  const s = String(raw).trim();
+  if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(s)){
+    // no time zone in the value: use the time exactly as written
+    const m = s.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})/);
+    if (m) return {day: m[1] + '-' + m[2] + '-' + m[3], hour: +m[4], min: +m[5]};
+    // sheet-style text such as "10/21/2026 6:29:41" (month/day/year, optional AM/PM)
+    const u = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?/);
+    if (u){
+      let h = +u[4]; const ap = (u[6] || '').toLowerCase();
+      if (ap === 'pm' && h < 12) h += 12; if (ap === 'am' && h === 12) h = 0;
+      return {day: u[3] + '-' + pad(+u[1]) + '-' + pad(+u[2]), hour: h, min: +u[5]};
+    }
+    return {day: ymd(d), hour: d.getHours(), min: d.getMinutes()};
+  }
+  const p = {}; TZ_FMT.formatToParts(d).forEach(x => p[x.type] = x.value);
+  return {day: p.year + '-' + p.month + '-' + p.day, hour: +p.hour, min: +p.minute};
+}
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -217,8 +239,9 @@ function ingest(j){
   ALL = rows.map(o => {
     const c = {}; let inc = 0, out = 0;
     CATS.forEach(k => { const a = Number(o[k + ' – Incoming']) || 0, b = Number(o[k + ' – Outgoing']) || 0; c[k] = {i: a, o: b}; inc += a; out += b; });
-    const start = new Date(o.start);
+    const start = new Date(o.start), cp = isNaN(start) ? {day: '', hour: 0, min: 0} : clockParts(o.start, start);
     return {
+      day: cp.day, hour: cp.hour, min: cp.min,
       session: o.session, point: String(o.point_code == null ? '' : o.point_code), weather: String(o.weather || ''),
       enumerator: String(o.enumerator_name || ''), device: o.device_id, start: start, valid: !isNaN(start),
       lat: num(o.gps_lat), lon: num(o.gps_lon), acc: num(o.gps_accuracy_m), cats: c, inc: inc, out: out, total: inc + out
@@ -241,7 +264,7 @@ function fillSelect(id, first, values){
 function apply(){
   const f = $('fFrom').value, t = $('fTo').value, p = $('fPoint').value, e = $('fEnum').value, w = $('fWeather').value;
   VIEW = ALL.filter(r => {
-    const d = ymd(r.start);
+    const d = r.day;
     return (!f || d >= f) && (!t || d <= t) && (!p || r.point === p) && (!e || r.enumerator === e) && (!w || r.weather === w);
   });
   shown = 50;
@@ -318,23 +341,29 @@ function renderCharts(){
   // points (top 10 by total)
   const pts = Array.from(groupBy(VIEW, r => r.point)).map(([k, rs]) => ({label: k || '(no code)', a: sum(rs, 'inc'), b: sum(rs, 'out')})).sort((a, b) => (b.a + b.b) - (a.a + a.b));
   $('cPoint').innerHTML = stackedBars(pts.slice(0, 10)) + (pts.length > 10 ? '<div class="sub" style="margin-top:6px">Showing top 10 of ' + pts.length + ' points</div>' : '');
-  // by start hour (average per session)
-  const hours = groupBy(VIEW, r => r.start.getHours());
+  // by start hour (actual summed count per hour, averaged across point-days)
+  const hours = groupBy(VIEW, r => r.hour);
   let hv = '';
-  const avgs = []; for (let h = 0; h < 24; h++){ const rs = hours.get(h); avgs.push(rs ? sum(rs, 'total') / rs.length : 0); }
+  const avgs = []; for (let h = 0; h < 24; h++){
+    const rs = hours.get(h);
+    if (!rs){ avgs.push(0); continue; }
+    // total counted in that hour for each point + day, then averaged across those point-days
+    const pd = groupBy(rs, r => r.point + '|' + r.day);
+    avgs.push(sum(rs, 'total') / pd.size);
+  }
   const hmax = Math.max.apply(null, avgs) || 1;
   const hStart = Math.max(0, avgs.findIndex(v => v > 0) - 0), hEnd = Math.min(23, 23 - avgs.slice().reverse().findIndex(v => v > 0));
   if (!VIEW.length) hv = '<div class="empty">No data for these filters</div>';
   else {
     hv = '<div class="vb">';
     for (let h = hStart; h <= hEnd; h++){
-      hv += '<div title="' + pad(h) + ':00 – ' + fmtN(avgs[h]) + ' avg"><span class="val">' + (avgs[h] ? fmtN(avgs[h]) : '') + '</span><span class="bar" style="height:' + (avgs[h] / hmax * 100) + '%"></span><span class="x">' + pad(h) + '</span></div>';
+      hv += '<div title="' + pad(h) + ':00 – ' + fmtN(avgs[h]) + ' per hour"><span class="val">' + (avgs[h] ? fmtN(avgs[h]) : '') + '</span><span class="bar" style="height:' + (avgs[h] / hmax * 100) + '%"></span><span class="x">' + pad(h) + '</span></div>';
     }
     hv += '</div>';
   }
   $('cHour').innerHTML = hv;
   // per day
-  const days = Array.from(groupBy(VIEW, r => ymd(r.start))).map(([k, rs]) => ({label: k, v: sum(rs, 'total')})).sort((a, b) => a.label < b.label ? -1 : 1);
+  const days = Array.from(groupBy(VIEW, r => r.day)).map(([k, rs]) => ({label: k, v: sum(rs, 'total')})).sort((a, b) => a.label < b.label ? -1 : 1);
   $('cDay').innerHTML = lineChart(days);
   // weather
   $('cWeather').innerHTML = singleBars(Array.from(groupBy(VIEW, r => r.weather || '(none)')).map(([k, rs]) => ({label: k, v: sum(rs, 'total') / rs.length})).sort((a, b) => b.v - a.v), ' avg');
@@ -401,7 +430,7 @@ function renderQuality(){
 
 /* ---------- table + export ---------- */
 const COLS = [
-  {k: 'start', t: 'Date & time', f: r => ymd(r.start) + ' ' + pad(r.start.getHours()) + ':' + pad(r.start.getMinutes())},
+  {k: 'start', t: 'Date & time', f: r => r.day + ' ' + pad(r.hour) + ':' + pad(r.min)},
   {k: 'point', t: 'Point', f: r => r.point},
   {k: 'weather', t: 'Weather', f: r => r.weather},
   {k: 'enumerator', t: 'Enumerator', f: r => r.enumerator},
